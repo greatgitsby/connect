@@ -131,14 +131,13 @@ export interface Files {
   qlogs: string[]
 }
 
-export type AthenaOfflineQueueResponse = AthenaOfflineQueueItem[]
+export type AthenaOfflineQueueResponse = AthenaOfflineQueueItem<unknown>[]
 
 export interface AthenaOfflineQueueItemParams {
   files_data: [string, string, Record<string, string>][]
 }
 
-export interface AthenaOfflineQueueItem extends ApiResponseBase, AthenaCallRequest<UploadFilesToUrlsRequest> {
-  method: 'uploadFilesToUrls'
+export interface AthenaOfflineQueueItem<T> extends ApiResponseBase, AthenaCallRequest<T> {
   expiry: number
 }
 
@@ -170,6 +169,7 @@ export interface DataFile {
   allow_cellular: boolean
   fn: string
   headers: Record<string, string>
+  priority: number
   url: string
 }
 
@@ -213,4 +213,16 @@ export interface UploadQueueItem {
   progress: number
   retry_count: number
   url: string
+}
+
+export interface UploadItem {
+  id: string
+  route: string
+  segment: number
+  filename: string
+  uploadUrl: string
+  progress: number
+  priority: number
+  retryCount: number
+  status: 'uploading' | 'completed' | 'error' | 'queued' | 'waiting_for_network'
 }
