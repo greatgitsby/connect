@@ -1,5 +1,5 @@
 import { createQuery } from '@tanstack/solid-query'
-import { createEffect, For, Match, Show, Suspense, Switch, VoidComponent } from 'solid-js'
+import { For, Match, Show, Suspense, Switch, VoidComponent } from 'solid-js'
 import { cancelUpload, COMMA_CONNECT_PRIORITY, getUploadQueue } from '~/api/athena'
 import { UploadFilesToUrlsRequest, UploadQueueItem } from '~/types'
 import LinearProgress from './material/LinearProgress'
@@ -7,6 +7,7 @@ import Icon from './material/Icon'
 import { getAthenaOfflineQueue } from '~/api/devices'
 import IconButton from './material/IconButton'
 import StatisticBar from './StatisticBar'
+import { createStore, reconcile } from 'solid-js/store'
 
 interface DecoratedUploadQueueItem extends UploadQueueItem {
   route: string
@@ -84,19 +85,21 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
             progress: 0,
             retry_count: 0,
           })),
-        ),
+        ) || [],
     retry: false,
     refetchInterval: 1000,
   }))
 
-  createEffect(() => {
-    console.log('onlineQueue', onlineQueue.isFetched, !!onlineQueue.error)
-  })
-
+  const [itemStore, setItemStore] = createStore<DecoratedUploadQueueItem[]>([])
   const items = () => {
-    const online = onlineQueue.isSuccess ? onlineQueue.data : []
-    const offline = offlineQueue.isSuccess ? (offlineQueue.data ?? []) : []
-    return [...online, ...offline]
+    // only check data (triggering suspense boundary) if haven't fetched yet
+    const online = !onlineQueue.isFetched || onlineQueue.status === 'success' ? onlineQueue.data : []
+
+    // update only changed items
+    const offline = offlineQueue.isFetching ? offlineQueue.data : []
+    setItemStore(reconcile([...(online || []), ...(offline || [])]))
+
+    return itemStore
   }
 
   const cancelAll = () =>
@@ -112,17 +115,28 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
         <IconButton name="close" onClick={cancelAll} />
       </div>
       <div class="relative h-[calc(4*3rem)] sm:h-[calc(6*3rem)] flex justify-center items-center text-on-surface-variant">
-        <Suspense fallback={<div>Waiting for device to connect...</div>}>
-          <Switch>
+        <Suspense
+          fallback={
+            <div class="flex items-center gap-2">
+              <Icon name="autorenew" class="animate-spin" />
+              <div>Waiting for device to connect...</div>
+            </div>
+          }
+        >
+          <Switch
+            fallback={
+              <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
+                <For each={items()}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
+              </div>
+            }
+          >
             <Match when={onlineQueue.isFetched && !onlineQueue.isSuccess && items().length === 0}>
+              <Icon name="error" class="mr-2" />
               <div>Device offline</div>
             </Match>
-            <Match when={true}>
-              <Show when={items().length > 0} fallback={<div>No items</div>}>
-                <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
-                  <For each={items()}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
-                </div>
-              </Show>
+            <Match when={items().length === 0}>
+              <Icon name="check" class="mr-2" />
+              <div>Nothing to upload</div>
             </Match>
           </Switch>
         </Suspense>
