@@ -87,16 +87,15 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
           })),
         ) || [],
     retry: false,
-    refetchInterval: 1000,
+    refetchInterval: 5000,
   }))
 
   const [itemStore, setItemStore] = createStore<DecoratedUploadQueueItem[]>([])
   const items = () => {
     // only check data (triggering suspense boundary) if haven't fetched yet
     const online = !onlineQueue.isFetched || onlineQueue.status === 'success' ? onlineQueue.data : []
+    const offline = offlineQueue.data ?? []
 
-    // update only changed items
-    const offline = offlineQueue.isFetching ? offlineQueue.data : []
     setItemStore(reconcile([...(online || []), ...(offline || [])]))
 
     return itemStore
