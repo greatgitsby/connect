@@ -2,6 +2,7 @@
 import './index.css'
 
 import * as Sentry from '@sentry/solid'
+import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { render } from 'solid-js/web'
 import App from './App'
 import './pwa.ts'
@@ -17,4 +18,11 @@ const root = document.getElementById('root')
 
 if (!root) throw new Error('No #root element found in the DOM.')
 
-render(() => <App />, root)
+render(
+  () => (
+    <QueryClientProvider client={new QueryClient()}>
+      <App />
+    </QueryClientProvider>
+  ),
+  root,
+)

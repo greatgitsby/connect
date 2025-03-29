@@ -1,10 +1,9 @@
-import { createSignal, For, Match, onCleanup, Show, Switch, VoidComponent } from 'solid-js'
+import { createQuery } from '@tanstack/solid-query'
+import { For, Match, Show, Switch, VoidComponent } from 'solid-js'
 import { cancelUpload, COMMA_CONNECT_PRIORITY, getUploadQueue } from '~/api/athena'
 import { UploadFilesToUrlsRequest, UploadQueueItem } from '~/types'
 import LinearProgress from './material/LinearProgress'
 import Icon from './material/Icon'
-import { createStore, reconcile } from 'solid-js/store'
-import clsx from 'clsx'
 import { getAthenaOfflineQueue } from '~/api/devices'
 import IconButton from './material/IconButton'
 import StatisticBar from './StatisticBar'
@@ -58,75 +57,46 @@ const UploadQueueRow: VoidComponent<{ dongleId: string; item: DecoratedUploadQue
   )
 }
 
-const WAITING = 'Waiting for device to connect...'
-
 const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
-  const [error, setError] = createSignal<string | undefined>(WAITING)
-  const [items, setItems] = createStore<DecoratedUploadQueueItem[]>([])
+  const onlineQueue = createQuery(() => ({
+    queryKey: ['online_queue', props.dongleId],
+    queryFn: () => getUploadQueue(props.dongleId),
+    select: (data) => data.result?.map((item) => ({ ...item, ...parseUploadPath(item.url) })).sort((a, b) => b.progress - a.progress) || [],
+    retry: false,
+    refetchInterval: 1000,
+    throwOnError: false,
+  }))
 
-  let timeout: Timer | undefined
+  const offlineQueue = createQuery(() => ({
+    queryKey: ['offline_queue', props.dongleId],
+    queryFn: () => getAthenaOfflineQueue(props.dongleId),
+    select: (data) =>
+      data
+        ?.filter((item) => item.method === 'uploadFilesToUrls')
+        .flatMap((item) =>
+          (item.params as UploadFilesToUrlsRequest).files_data.map((file) => ({
+            ...file,
+            ...parseUploadPath(file.url),
+            path: file.fn,
+            created_at: 0,
+            current: false,
+            id: '',
+            progress: 0,
+            retry_count: 0,
+          })),
+        ),
+    refetchInterval: 1000,
+    throwOnError: false,
+  }))
 
+  const items = () => [...(onlineQueue.data || []), ...(offlineQueue.data || [])]
+  const offline = () => onlineQueue.isLoading || onlineQueue.isLoadingError || onlineQueue.isRefetchError
+  const error = () => onlineQueue.error
   const cancelAll = () =>
     cancel(
       props.dongleId,
-      items.map((item) => item.id),
+      items().map((item) => item.id),
     )
-  const fetch = () => {
-    getAthenaOfflineQueue(props.dongleId)
-      .then((res) => {
-        if (!error()) return
-        setItems(
-          reconcile(
-            res
-              ?.filter((r) => r.method === 'uploadFilesToUrls')
-              .flatMap((item) => {
-                return (item.params as UploadFilesToUrlsRequest).files_data.map((file) => ({
-                  ...file,
-                  ...parseUploadPath(file.url),
-                  path: file.fn,
-                  created_at: 0,
-                  current: false,
-                  id: '',
-                  progress: 0,
-                  retry_count: 0,
-                }))
-              }) || [],
-          ),
-        )
-      })
-      .catch((error) => {
-        console.error('Error fetching offline queue', error)
-      })
-    getUploadQueue(props.dongleId)
-      .then((res) => {
-        if (res.error) {
-          setError(res.error)
-          return
-        }
-        setItems(
-          reconcile(res.result?.map((item) => ({ ...item, ...parseUploadPath(item.url) })).sort((a, b) => b.progress - a.progress) || []),
-        )
-        setError(undefined)
-      })
-      .catch((error) => {
-        if (error instanceof Error && error.cause instanceof Response && error.cause.status === 404) {
-          setError('Device is offline')
-          return
-        }
-        setError(error.toString())
-      })
-      .finally(() => {
-        if (!timeout) return
-        timeout = setTimeout(fetch, 1000)
-      })
-  }
-
-  timeout = setTimeout(fetch, 0)
-
-  onCleanup(() => {
-    clearTimeout(timeout)
-    timeout = undefined
-  })
 
   return (
     <div class="flex flex-col gap-4 bg-surface-container-lowest">
@@ -138,15 +108,23 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
         <Switch
           fallback={
             <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
-              <For each={items}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
+              <For each={items()}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
             </div>
           }
         >
-          <Match when={error() && items.length === 0}>
-            <Icon class={clsx(error() === WAITING && 'animate-spin')} name={error() === WAITING ? 'progress_activity' : 'error'} />
-            <span class="ml-2">{error()}</span>
+          <Match when={!offline() && !error() && offlineQueue.data?.length === 0}>
+            <Icon class="animate-spin" name="progress_activity" />
+            <span class="ml-2">Waiting for device to connect...</span>
           </Match>
-          <Match when={items.length === 0}>
+          <Match when={offline()}>
+            <Icon name="error" />
+            <span class="ml-2">Device is offline</span>
+          </Match>
+          <Match when={error()}>
+            <Icon name="error" />
+            <span class="ml-2">{error()?.toString()}</span>
+          </Match>
+          <Match when={items().length === 0}>
             <Icon name="check" />
             <span class="ml-2">Nothing to upload</span>
           </Match>
