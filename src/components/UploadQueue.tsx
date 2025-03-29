@@ -1,5 +1,5 @@
 import { createQuery } from '@tanstack/solid-query'
-import { For, Match, Show, Switch, VoidComponent } from 'solid-js'
+import { createEffect, For, Match, Show, Suspense, Switch, VoidComponent } from 'solid-js'
 import { cancelUpload, COMMA_CONNECT_PRIORITY, getUploadQueue } from '~/api/athena'
 import { UploadFilesToUrlsRequest, UploadQueueItem } from '~/types'
 import LinearProgress from './material/LinearProgress'
@@ -64,12 +64,12 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
     select: (data) => data.result?.map((item) => ({ ...item, ...parseUploadPath(item.url) })).sort((a, b) => b.progress - a.progress) || [],
     retry: false,
     refetchInterval: 1000,
-    throwOnError: false,
   }))
 
   const offlineQueue = createQuery(() => ({
     queryKey: ['offline_queue', props.dongleId],
     queryFn: () => getAthenaOfflineQueue(props.dongleId),
+    enabled: onlineQueue.isFetched && !onlineQueue.isSuccess,
     select: (data) =>
       data
         ?.filter((item) => item.method === 'uploadFilesToUrls')
@@ -86,12 +86,13 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
           })),
         ),
     refetchInterval: 1000,
-    throwOnError: false,
   }))
 
+  createEffect(() => {
+    console.log('onlineQueue', onlineQueue.isFetched, !!onlineQueue.error)
+  })
+
   const items = () => [...(onlineQueue.data || []), ...(offlineQueue.data || [])]
-  const offline = () => onlineQueue.isLoading || onlineQueue.isLoadingError || onlineQueue.isRefetchError
-  const error = () => onlineQueue.error
   const cancelAll = () =>
     cancel(
       props.dongleId,
@@ -105,30 +106,28 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
         <IconButton name="close" onClick={cancelAll} />
       </div>
       <div class="relative h-[calc(4*3rem)] sm:h-[calc(6*3rem)] flex justify-center items-center text-on-surface-variant">
-        <Switch
-          fallback={
-            <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
-              <For each={items()}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
-            </div>
-          }
-        >
-          <Match when={!offline() && !error() && offlineQueue.data?.length === 0}>
-            <Icon class="animate-spin" name="progress_activity" />
-            <span class="ml-2">Waiting for device to connect...</span>
-          </Match>
-          <Match when={offline()}>
-            <Icon name="error" />
-            <span class="ml-2">Device is offline</span>
-          </Match>
-          <Match when={error()}>
-            <Icon name="error" />
-            <span class="ml-2">{error()?.toString()}</span>
-          </Match>
-          <Match when={items().length === 0}>
-            <Icon name="check" />
-            <span class="ml-2">Nothing to upload</span>
-          </Match>
-        </Switch>
+        <Suspense fallback={<div>Waiting for device to connect...</div>}>
+          <Switch
+            fallback={
+              <Suspense fallback={<div>Waiting for device to connect...</div>}>
+                <Show when={onlineQueue.data?.length !== 0 || offlineQueue.data?.length !== 0} fallback={<div>No items</div>}>
+                  <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
+                    <For each={[...(onlineQueue.data || []), ...(offlineQueue.data || [])]}>
+                      {(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}
+                    </For>
+                  </div>
+                </Show>
+              </Suspense>
+            }
+          >
+            <Match when={!onlineQueue.isFetched && offlineQueue.data?.length === 0}>
+              <div>Waiting for device to connect...</div>
+            </Match>
+            <Match when={onlineQueue.isFetched && !onlineQueue.isSuccess && offlineQueue.data?.length === 0}>
+              <div>Device offline</div>
+            </Match>
+          </Switch>
+        </Suspense>
       </div>
     </div>
   )
