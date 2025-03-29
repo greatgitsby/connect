@@ -1,5 +1,5 @@
 import { createQuery } from '@tanstack/solid-query'
-import { For, Match, Show, Suspense, Switch, VoidComponent } from 'solid-js'
+import { For, Show, Suspense, VoidComponent } from 'solid-js'
 import { cancelUpload, COMMA_CONNECT_PRIORITY, getUploadQueue } from '~/api/athena'
 import { UploadFilesToUrlsRequest, UploadQueueItem } from '~/types'
 import LinearProgress from './material/LinearProgress'
@@ -123,22 +123,19 @@ const UploadQueue: VoidComponent<{ dongleId: string }> = (props) => {
             </div>
           }
         >
-          <Switch
+          <Show
+            when={items().length > 0}
             fallback={
-              <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
-                <For each={items()}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
+              <div class="flex items-center gap-2">
+                <Icon name={onlineQueue.isFetched && !onlineQueue.isSuccess ? 'error' : 'check'} class="mr-2" />
+                <div>{onlineQueue.isFetched && !onlineQueue.isSuccess ? 'Device offline' : 'Nothing to upload'}</div>
               </div>
             }
           >
-            <Match when={onlineQueue.isFetched && !onlineQueue.isSuccess && items().length === 0}>
-              <Icon name="error" class="mr-2" />
-              <div>Device offline</div>
-            </Match>
-            <Match when={items().length === 0}>
-              <Icon name="check" class="mr-2" />
-              <div>Nothing to upload</div>
-            </Match>
-          </Switch>
+            <div class="absolute inset-0 bottom-4 flex flex-col gap-2 px-4 overflow-y-auto hide-scrollbar">
+              <For each={items()}>{(item) => <UploadQueueRow dongleId={props.dongleId} item={item} />}</For>
+            </div>
+          </Show>
         </Suspense>
       </div>
     </div>
