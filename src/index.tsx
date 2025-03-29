@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/solid-query'
 import { render } from 'solid-js/web'
 import App from './App'
 import './pwa.ts'
+import { SolidQueryDevtools } from '@tanstack/solid-query-devtools'
 
 const environment = import.meta.env.VITE_SENTRY_ENVIRONMENT as string | undefined
 Sentry.init({
@@ -21,6 +22,7 @@ if (!root) throw new Error('No #root element found in the DOM.')
 render(
   () => (
     <QueryClientProvider client={new QueryClient()}>
+      <SolidQueryDevtools />
       <App />
     </QueryClientProvider>
   ),
