@@ -93,7 +93,7 @@ const PairActivity: VoidComponent<{ onPaired: () => void }> = (props) => {
 
         return (
           <>
-            <TopAppBar>Add new device</TopAppBar>
+            <TopAppBar class="m-8">Add new device</TopAppBar>
 
             <div class="flex flex-col items-center gap-4">
               <Icon name="autorenew" class="animate-spin" size="40" />
@@ -105,7 +105,9 @@ const PairActivity: VoidComponent<{ onPaired: () => void }> = (props) => {
       error(input, to) {
         return (
           <>
-            <TopAppBar trailing={<IconButton name="close" href="/" />}>Add new device</TopAppBar>
+            <TopAppBar class="m-8" trailing={<IconButton name="close" href="/" />}>
+              Add new device
+            </TopAppBar>
 
             <div class="flex flex-col items-center gap-4">
               An error occurred: {input.error.message}
