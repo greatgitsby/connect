@@ -10,10 +10,11 @@ import { api } from '../../api/backend';
 import { primeNav, analyticsEvent } from '../../actions';
 import { DEFAULT_LOCATION, MAPBOX_STYLE, MAPBOX_TOKEN, reverseLookup } from '../../utils/geocode';
 import Colors from '../../colors';
-import { PinCarIcon } from '../../icons';
-import { timeFromNow } from '../../utils';
+import { PinCarIcon, PinDestinationIcon } from '../../icons';
+import { deviceIsOnline, timeFromNow } from '../../utils';
 import VisibilityHandler from '../VisibilityHandler';
 import { subscribeWindowSize } from '../../hooks/window';
+import NavigateSearch from './NavigateSearch';
 import * as Utils from './utils';
 import { isIos } from '../../utils/browser.js';
 
@@ -102,6 +103,40 @@ const styles = () => ({
     width: 20,
     height: 32,
   },
+  destinationPin: {
+    width: 28,
+    height: 40,
+    filter: 'drop-shadow(0 2px 4px rgba(0,0,0,.5))',
+  },
+  navigateButton: {
+    position: 'absolute',
+    bottom: 12,
+    right: 16, // aligns with DeviceInfo's px-4
+    zIndex: 4,
+    display: 'inline-flex',
+    alignItems: 'center',
+    // mirrors DeviceInfo's carBattery pill
+    padding: '5px 16px',
+    borderRadius: 15,
+    border: `1px solid ${Colors.white10}`,
+    backgroundColor: 'rgba(30,34,36,.92)',
+    color: Colors.white,
+    fontSize: 14,
+    fontWeight: 500,
+    lineHeight: '1.4em',
+    textTransform: 'none',
+    minHeight: 'unset',
+    minWidth: 'unset',
+    backdropFilter: 'blur(6px)',
+    '&:hover': {
+      backgroundColor: Colors.grey700,
+    },
+    '& svg': {
+      width: 14,
+      height: 14,
+      marginRight: 8,
+    },
+  },
   carPinTooltip: {
     textAlign: 'center',
     borderRadius: 14,
@@ -140,6 +175,14 @@ const initialState = {
   noFly: false,
   windowWidth: window.innerWidth,
   showPrimeAd: true,
+  navOpen: false,
+  navDestination: null,
+};
+
+const NAV_TOP_PADDING = 70; // search field + margin
+const navHeight = (navOpen, windowWidth) => {
+  if (!navOpen) return 200;
+  return windowWidth < 600 ? 520 : 460;
 };
 
 class Navigation extends Component {
@@ -160,6 +203,7 @@ class Navigation extends Component {
     this.searchSelectBoxRef = React.createRef();
     this.primeAdBoxRef = React.createRef();
     this.carPinTooltipRef = React.createRef();
+    this.navCardRef = React.createRef();
 
     this.checkWebGLSupport = this.checkWebGLSupport.bind(this);
     this.flyToMarkers = this.flyToMarkers.bind(this);
@@ -173,11 +217,16 @@ class Navigation extends Component {
     this.itemLoc = this.itemLoc.bind(this);
     this.itemLngLat = this.itemLngLat.bind(this);
     this.viewportChange = this.viewportChange.bind(this);
+    this.onMapResize = this.onMapResize.bind(this);
     this.getDeviceLastLocation = this.getDeviceLastLocation.bind(this);
     this.getCarLocation = this.getCarLocation.bind(this);
     this.carLocationCircle = this.carLocationCircle.bind(this);
     this.clearSearchSelect = this.clearSearchSelect.bind(this);
     this.onContainerRef = this.onContainerRef.bind(this);
+    this.openNav = this.openNav.bind(this);
+    this.closeNav = this.closeNav.bind(this);
+    this.setNavDestination = this.setNavDestination.bind(this);
+    this.onNavSent = this.onNavSent.bind(this);
   }
 
   componentDidMount() {
@@ -191,11 +240,15 @@ class Navigation extends Component {
 
   componentDidUpdate(prevProps, prevState) {
     const { dongleId, device } = this.props;
-    const { geoLocateCoords, search, carLastLocation, searchSelect } = this.state;
+    const { geoLocateCoords, search, carLastLocation, searchSelect, navOpen, navDestination, viewport } = this.state;
 
+    // The container height animates when navigation opens; ReactMapGL reports the new size through
+    // onViewportChange, so refit once the viewport height settles rather than on the click itself.
+    const mapResized = navOpen && prevState.viewport?.height !== viewport.height;
     if ((carLastLocation && !prevState.carLastLocation)
       || (geoLocateCoords && !prevState.geoLocateCoords) || (searchSelect && prevState.searchSelect !== searchSelect)
-      || (search && prevState.search !== search)) {
+      || (search && prevState.search !== search)
+      || (navDestination !== prevState.navDestination) || mapResized) {
       this.flyToMarkers();
     }
 
@@ -332,8 +385,25 @@ class Navigation extends Component {
     });
   }
 
+  openNav() {
+    this.props.dispatch(analyticsEvent('nav_open'));
+    this.setState({ navOpen: true, navDestination: null, searchSelect: null, noFly: false });
+  }
+
+  closeNav() {
+    this.setState({ navOpen: false, navDestination: null, noFly: false }, this.flyToMarkers);
+  }
+
+  setNavDestination(navDestination) {
+    this.setState({ navDestination, noFly: false });
+  }
+
+  onNavSent() {
+    this.closeNav();
+  }
+
   flyToMarkers() {
-    const { noFly, geoLocateCoords, search, searchSelect, windowWidth, viewport } = this.state;
+    const { noFly, geoLocateCoords, search, searchSelect, windowWidth, viewport, navOpen, navDestination } = this.state;
     const carLocation = this.getCarLocation();
 
     if (noFly) {
@@ -347,7 +417,10 @@ class Navigation extends Component {
     if (carLocation) {
       bounds.push([carLocation.location, carLocation.location]);
     }
-    if (searchSelect) {
+    if (navDestination) {
+      const dest = [navDestination.longitude, navDestination.latitude];
+      bounds.push([dest, dest]);
+    } else if (searchSelect) {
       bounds.push(this.itemLngLat(searchSelect, true));
     } else if (search) {
       search.forEach((item) => bounds.push(this.itemLngLat(item, true)));
@@ -362,20 +435,24 @@ class Navigation extends Component {
         Math.max.apply(null, bounds.map((e) => e[1][1])),
       ]];
 
-      if (Math.abs(bbox[0][0] - bbox[1][0]) < 0.01) {
-        bbox[0][0] -= 0.01;
-        bbox[0][1] += 0.01;
-      }
-      if (Math.abs(bbox[1][0] - bbox[1][1]) < 0.01) {
-        bbox[1][0] -= 0.01;
-        bbox[1][1] += 0.01;
+      // Give near-identical points a minimum span so fitBounds doesn't zoom in to nothing.
+      const MIN_SPAN = 0.01;
+      for (let axis = 0; axis < 2; axis += 1) {
+        if (bbox[1][axis] - bbox[0][axis] < MIN_SPAN) {
+          const center = (bbox[0][axis] + bbox[1][axis]) / 2;
+          bbox[0][axis] = center - MIN_SPAN / 2;
+          bbox[1][axis] = center + MIN_SPAN / 2;
+        }
       }
 
-      const bottomBoxHeight = (this.searchSelectBoxRef.current && viewport.height > 200)
+      let bottomBoxHeight = (this.searchSelectBoxRef.current && viewport.height > 200)
         ? this.searchSelectBoxRef.current.getBoundingClientRect().height + 10 : 0;
+      if (navOpen && this.navCardRef.current) {
+        bottomBoxHeight = Math.max(bottomBoxHeight, this.navCardRef.current.getBoundingClientRect().height + 10);
+      }
 
       let rightBoxWidth = 0;
-      let topBoxHeight = 0;
+      let topBoxHeight = navOpen ? NAV_TOP_PADDING : 0;
 
       const primeAdBox = this.primeAdBoxRef.current;
       if (primeAdBox) {
@@ -394,7 +471,7 @@ class Navigation extends Component {
       };
       if (viewport.width) {
         try {
-          const newVp = new WebMercatorViewport(viewport).fitBounds(bbox, { padding, maxZoom: 10 });
+          const newVp = new WebMercatorViewport(viewport).fitBounds(bbox, { padding, maxZoom: navDestination ? 14 : 10 });
           this.setState({ viewport: newVp });
         } catch (err) {
           console.error(err);
@@ -444,6 +521,14 @@ class Navigation extends Component {
     }
   }
 
+  onMapResize({ width, height }) {
+    this.setState((prevState) => (
+      (prevState.viewport.width === width && prevState.viewport.height === height)
+        ? null
+        : { viewport: { ...prevState.viewport, width, height } }
+    ));
+  }
+
   carLocationCircle(carLocation) {
     const points = 128;
     const km = carLocation.accuracy / 1000;
@@ -483,9 +568,10 @@ class Navigation extends Component {
   }
 
   render() {
-    const { classes, device } = this.props;
-    const { mapError, hasFocus, searchSelect, viewport, windowWidth, showPrimeAd } = this.state;
+    const { classes, device, dongleId, profile } = this.props;
+    const { mapError, hasFocus, searchSelect, viewport, windowWidth, showPrimeAd, navOpen, navDestination } = this.state;
     const carLocation = this.getCarLocation();
+    const canNavigate = Boolean(device) && (device.is_owner || Boolean(profile?.superuser));
 
     const cardStyle = windowWidth < 600
       ? { zIndex: 4, width: 'auto', height: 'auto', top: 'auto', bottom: 'auto', left: 10, right: 10 }
@@ -503,7 +589,7 @@ class Navigation extends Component {
       <div
         ref={this.onContainerRef}
         className={classes.mapContainer}
-        style={{ height: 200 }}
+        style={{ height: navHeight(navOpen, windowWidth), position: 'relative', transition: 'height .45s cubic-bezier(.2,.8,.2,1)' }}
       >
         <VisibilityHandler onVisible={this.updateDevice} onInit onDongleId minInterval={60} />
         {mapError
@@ -520,6 +606,7 @@ class Navigation extends Component {
           bearing={viewport.bearing}
           pitch={viewport.pitch}
           onViewportChange={this.viewportChange}
+          onResize={this.onMapResize}
           onContextMenu={null}
           mapStyle={MAPBOX_STYLE}
           width="100%"
@@ -583,7 +670,21 @@ class Navigation extends Component {
                 />
               </Source>
             )}
-          {searchSelect
+          {navDestination
+            && (
+              <Marker
+                latitude={navDestination.latitude}
+                longitude={navDestination.longitude}
+                offsetLeft={-14}
+                offsetTop={-40}
+                captureDrag={false}
+                captureClick={false}
+                captureDoubleClick={false}
+              >
+                <PinDestinationIcon className={classes.destinationPin} alt="destination" />
+              </Marker>
+            )}
+          {searchSelect && !navOpen
             && (
               <HTMLOverlay
                 redraw={this.renderSearchOverlay}
@@ -595,7 +696,7 @@ class Navigation extends Component {
                 style={{ ...cardStyle, bottom: 10 }}
               />
             )}
-          {showPrimeAd && !device.prime && device.is_owner
+          {showPrimeAd && !navOpen && !device.prime && device.is_owner
             && (
               <HTMLOverlay
                 redraw={this.renderPrimeAd}
@@ -608,6 +709,29 @@ class Navigation extends Component {
               />
             )}
         </ReactMapGL>
+        {canNavigate && !navOpen && !searchSelect
+          && (
+            <Button className={classes.navigateButton} onClick={this.openNav}>
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2 4.5 21l7.5-4 7.5 4z" /></svg>
+              navigate
+            </Button>
+          )}
+        {navOpen
+          && (
+            <NavigateSearch
+              key={dongleId}
+              dongleId={dongleId}
+              deviceName={device.alias || 'Device'}
+              deviceOnline={deviceIsOnline(device)}
+              carLocation={carLocation ? carLocation.location : null}
+              destination={navDestination}
+              onSelect={this.setNavDestination}
+              onClose={this.closeNav}
+              onSent={this.onNavSent}
+              dispatch={this.props.dispatch}
+              cardRef={this.navCardRef}
+            />
+          )}
       </div>
     );
   }
@@ -685,6 +809,7 @@ class Navigation extends Component {
 const stateToProps = (state) => ({
   device: state.device,
   dongleId: state.dongleId,
+  profile: state.profile,
 });
 
 export default connect(stateToProps)(withStyles(styles)(Navigation));

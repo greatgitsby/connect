@@ -112,6 +112,16 @@ export const PinCarIcon = (props) => (
   </SvgIcon>
 );
 
+export const PinDestinationIcon = (props) => (
+  <SvgIcon {...props} viewBox="0 0 28 40">
+    <path
+      d="M14 40C14 40 0 24.5 0 14a14 14 0 1 1 28 0c0 10.5-14 26-14 26z"
+      style={{ fill: '#22c967' }}
+    />
+    <circle cx="14" cy="14" r="5" style={{ fill: '#fff' }} />
+  </SvgIcon>
+);
+
 export const AccountIcon = (props) => (
   <SvgIcon {...props}>
     <g transform="translate(-198.000000, -189.000000)">

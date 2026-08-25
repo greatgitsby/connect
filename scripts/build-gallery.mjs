@@ -91,6 +91,27 @@ const GALLERY_STATES = [
     modalText: 'Cancel prime subscription',
   },
   {
+    name: 'navigate-search',
+    label: 'Navigate search',
+    page: 'dashboard',
+    actions: [
+      { text: 'navigate' },
+      { selector: '[aria-label="Navigate to"]', type: 'blue' },
+    ],
+    readySelector: '[role="option"]',
+  },
+  {
+    name: 'navigate-destination',
+    label: 'Navigate destination',
+    page: 'dashboard',
+    actions: [
+      { text: 'navigate' },
+      { selector: '[aria-label="Navigate to"]', type: 'blue' },
+      { selector: '[role="option"]' },
+    ],
+    readySelector: '[data-testid="navigate-destination"]',
+  },
+  {
     name: 'pairing-status-modal',
     label: 'Pairing status modal',
     page: 'dashboard',
@@ -339,6 +360,24 @@ async function mockGalleryRequest(request, origin, pageName, fixtures) {
     });
   }
 
+  if (url.hostname === 'api.mapbox.com' && url.pathname.endsWith('/searchbox/v1/suggest')) {
+    return jsonResponse(request, {
+      suggestions: [
+        { mapbox_id: 'poi.1', name: 'Blue Bottle Coffee', feature_type: 'poi', distance: 4900, address: '1150 Mission St', context: { country: { name: 'United States', country_code: 'us' }, region: { name: 'California', region_code: 'CA' }, place: { name: 'San Diego' }, postcode: { name: '92101' } } },
+        { mapbox_id: 'poi.2', name: 'Bluewater Grill', feature_type: 'poi', distance: 4000, address: '3667 India St', context: { country: { name: 'United States', country_code: 'us' }, region: { name: 'California', region_code: 'CA' }, place: { name: 'San Diego' }, postcode: { name: '92103' } } },
+        { mapbox_id: 'address.3', name: '10 Blue Lake Dr', feature_type: 'address', distance: 5600, address: '10 Blue Lake Dr', context: { country: { name: 'United States', country_code: 'us' }, region: { name: 'California', region_code: 'CA' }, place: { name: 'San Diego' }, postcode: { name: '92131' } } },
+      ],
+    });
+  }
+  if (url.hostname === 'api.mapbox.com' && url.pathname.includes('/searchbox/v1/retrieve/')) {
+    return jsonResponse(request, {
+      features: [{
+        geometry: { coordinates: [-117.1611, 32.7157] },
+        properties: { mapbox_id: 'poi.1', name: 'Blue Bottle Coffee', feature_type: 'poi', address: '1150 Mission St', context: { country: { name: 'United States', country_code: 'us' }, region: { name: 'California', region_code: 'CA' }, place: { name: 'San Diego' }, postcode: { name: '92101' } } },
+      }],
+    });
+  }
+
   const apiHosts = new Set(['api.comma.ai', 'athena.comma.ai', 'billing.comma.ai']);
   if (!apiHosts.has(url.hostname)) return request.abort('blockedbyclient');
   if (request.method() === 'OPTIONS') {
@@ -504,6 +543,13 @@ async function updateStoredPairToken(page, pairToken) {
 }
 
 async function clickGalleryAction(page, action, label) {
+  if (action.type !== undefined) {
+    await page.waitForSelector(action.selector, { visible: true, timeout: 5000 }).catch((error) => {
+      throw new Error(`${label}: typing target ${action.selector} was not visible`, { cause: error });
+    });
+    await page.type(action.selector, action.type);
+    return;
+  }
   const description = action.selector ?? JSON.stringify(action.text);
   const target = { selector: action.selector, targetText: action.text };
   if (!action.optional) {
@@ -530,6 +576,11 @@ async function clickGalleryAction(page, action, label) {
 
 async function openGalleryModal(page, state, label) {
   for (const action of state.actions ?? []) await clickGalleryAction(page, action, label);
+  if (state.page && state.readySelector) {
+    await page.waitForSelector(state.readySelector, { visible: true, timeout: 5000 }).catch((error) => {
+      throw new Error(`${label}: ${state.readySelector} did not appear`, { cause: error });
+    });
+  }
   if (!state.modalText) return;
   await page.waitForFunction((expected) => {
     return Array.from(document.querySelectorAll('[role="document"]'))

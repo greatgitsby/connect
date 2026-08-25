@@ -101,12 +101,7 @@ async function hasClipBlob(dongleId, filename, requestedAt) {
   return stored instanceof Blob;
 }
 
-async function call(dongleId, method, params) {
-  const payload = await Athena.postJsonRpcPayload(dongleId, { jsonrpc: '2.0', id: crypto.randomUUID(), method, params });
-  if (!payload) throw new Error('Athena request failed');
-  if (payload.error) throw new Error(payload.error.message || 'Athena request failed');
-  return payload.result;
-}
+const call = (dongleId, method, params) => Athena.call(dongleId, method, params);
 
 export function deviceSupportsClips(device) {
   if (!deviceVersionAtLeast(device, '0.11.2')) return Promise.resolve(false);

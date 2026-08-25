@@ -113,6 +113,14 @@ export const athena = {
   postJsonRpcPayload(dongleId, payload) {
     return athenaRequest.post(dongleId, payload);
   },
+
+  // Call a JSON-RPC method on the device and unwrap the result. Throws on transport or RPC errors.
+  async call(dongleId, method, params) {
+    const payload = await athenaRequest.post(dongleId, { jsonrpc: '2.0', id: crypto.randomUUID(), method, params });
+    if (!payload) throw new Error('Athena request failed');
+    if (payload.error) throw new Error(payload.error.message || 'Athena request failed');
+    return payload.result;
+  },
 };
 
 export const billing = {

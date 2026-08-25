@@ -110,7 +110,29 @@ async function mockFetch(input, init = {}) {
   if (url.pathname.endsWith('/subscription') || url.pathname.endsWith('/subscribe_info')) return json(null);
   if (url.pathname.endsWith('/events.json') || url.pathname.endsWith('/coords.json')) return json([]);
   if (url.pathname.endsWith('/files') || url.pathname.endsWith('/preserved')) return json(url.pathname.endsWith('/files') ? {} : []);
-  if (url.hostname === 'athena.comma.ai') return json({ jsonrpc: '2.0', id: 0, result: {} });
+  if (url.hostname === 'api.mapbox.com' && url.pathname.endsWith('/suggest')) {
+    return json({
+      suggestions: [{
+        mapbox_id: 'poi.1', name: 'Blue Bottle Coffee', feature_type: 'poi', distance: 3300,
+        full_address: '66 Mint St, San Francisco, California 94103, United States', address: '66 Mint St',
+        context: { country: { name: 'United States', country_code: 'us' }, region: { name: 'California', region_code: 'CA' }, postcode: { name: '94103' }, place: { name: 'San Francisco' }, address: { name: '66 Mint St' } },
+      }],
+    });
+  }
+  if (url.hostname === 'api.mapbox.com' && url.pathname.includes('/retrieve/')) {
+    return json({
+      features: [{
+        geometry: { coordinates: [-122.4014, 37.7909] },
+        properties: { mapbox_id: 'poi.1', name: 'Blue Bottle Coffee', feature_type: 'poi', full_address: '66 Mint St, San Francisco, California 94103, United States', address: '66 Mint St', context: { country: { name: 'United States', country_code: 'us' }, region: { name: 'California', region_code: 'CA' }, postcode: { name: '94103' }, place: { name: 'San Francisco' }, address: { name: '66 Mint St' } } },
+      }],
+    });
+  }
+  if (url.hostname === 'athena.comma.ai') {
+    const payload = init.body ? JSON.parse(init.body) : {};
+    mocks.requests[mocks.requests.length - 1].payload = payload;
+    if (payload.method === 'setNavDestination' && options.navError) return json({ jsonrpc: '2.0', id: payload.id, error: { message: options.navError } });
+    return json({ jsonrpc: '2.0', id: payload.id ?? 0, result: {} });
+  }
   throw new Error(`Unhandled request: ${init.method || 'GET'} ${url.href}`);
 }
 
@@ -255,6 +277,63 @@ describe('whole-app behavior', () => {
     await waitFor(() => expect(history.location.pathname).toBe(`/${FIRST}`));
     act(() => history.goForward());
     await waitFor(() => expect(history.location.pathname).toBe(`/${SECOND}`));
+  });
+
+  test('navigate search sends a destination to the device', async () => {
+    const online = devices.map((device) => ({ ...device, last_athena_ping: Math.floor(Date.now() / 1000), openpilot_version: '0.11.2' }));
+    await renderApp(`/${FIRST}`, { devices: online, selected: FIRST });
+    fireEvent.click(await screen.findByRole('button', { name: 'navigate' }));
+    const input = await screen.findByRole('combobox', { name: 'Navigate to' });
+    fireEvent.change(input, { target: { value: 'blue' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Blue Bottle Coffee/ }));
+    const card = await screen.findByTestId('navigate-destination');
+    expect(within(card).getByText('66 Mint St, San Francisco, CA 94103')).toBeVisible();
+    fireEvent.click(within(card).getByRole('button', { name: 'Navigate' }));
+    await waitFor(() => expect(within(card).getByRole('button', { name: 'Sent' })).toBeVisible());
+    const request = mocks.requests.find((r) => r.url === `https://athena.comma.ai/${FIRST}` && r.payload?.method === 'setNavDestination');
+    expect(request.payload).toMatchObject({
+      jsonrpc: '2.0',
+      method: 'setNavDestination',
+      params: {
+        latitude: 37.7909,
+        longitude: -122.4014,
+        place_name: 'Blue Bottle Coffee',
+        place_details: '66 Mint St, San Francisco, CA 94103',
+      },
+    });
+    await waitFor(() => expect(screen.queryByTestId('navigate-search')).not.toBeInTheDocument(), { timeout: 3000 });
+    expect(await screen.findByRole('button', { name: 'navigate' })).toBeVisible();
+  });
+
+  test('navigate search shows device errors and stays open', async () => {
+    const online = devices.map((device) => ({ ...device, last_athena_ping: Math.floor(Date.now() / 1000) }));
+    await renderApp(`/${FIRST}`, { devices: online, selected: FIRST, navError: 'Method not found' });
+    fireEvent.click(await screen.findByRole('button', { name: 'navigate' }));
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Navigate to' }), { target: { value: 'blue' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Blue Bottle Coffee/ }));
+    const card = await screen.findByTestId('navigate-destination');
+    fireEvent.click(within(card).getByRole('button', { name: 'Navigate' }));
+    expect(await within(card).findByText('This device does not support navigation yet')).toBeVisible();
+    expect(within(card).getByRole('button', { name: 'Navigate' })).toBeEnabled();
+  });
+
+  test('navigate is disabled for offline devices and hidden for shared devices', async () => {
+    const { unmount } = await renderApp(`/${FIRST}`, { selected: FIRST });
+    fireEvent.click(await screen.findByRole('button', { name: 'navigate' }));
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Navigate to' }), { target: { value: 'blue' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Blue Bottle Coffee/ }));
+    const card = await screen.findByTestId('navigate-destination');
+    expect(within(card).getByRole('button', { name: 'Navigate' })).toBeDisabled();
+    expect(within(card).getByText('Zulu is offline')).toBeVisible();
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Navigate to' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('navigate-destination')).not.toBeInTheDocument());
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Navigate to' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('navigate-search')).not.toBeInTheDocument());
+    unmount();
+
+    await renderApp(`/${SHARED}`);
+    expect(await screen.findByText('Shared device')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'navigate' })).not.toBeInTheDocument();
   });
 
   test('drive selection, timeline range, back, and close preserve exact URLs', async () => {
