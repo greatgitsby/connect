@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as Sentry from '@sentry/react';
 
-import { addRecentDestination, getRecentDestinations, setNavDestination } from '../../api/navigation';
+import { setNavDestination } from '../../api/navigation';
 import { analyticsEvent } from '../../actions';
 import { distanceBetween, newSearchSession, retrievePlace, searchPlaces } from '../../utils/geocode';
 import { isMetric, KM_PER_MI } from '../../utils/conversions';
@@ -12,11 +12,6 @@ const SENT_DISMISS_MS = 1200;
 const SearchIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-[18px] w-[18px] shrink-0 text-white/60" aria-hidden="true">
     <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-  </svg>
-);
-const ClockIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-[15px] w-[15px]" aria-hidden="true">
-    <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
   </svg>
 );
 const PinIcon = () => (
@@ -74,7 +69,6 @@ export default function NavigateSearch({
 }) {
   const [query, setQuery] = useState(destination?.name || '');
   const [results, setResults] = useState([]);
-  const [recents, setRecents] = useState([]);
   const [listOpen, setListOpen] = useState(!destination);
   const [activeIdx, setActiveIdx] = useState(0);
   const [searching, setSearching] = useState(false);
@@ -99,14 +93,6 @@ export default function NavigateSearch({
       if (sentTimerRef.current) clearTimeout(sentTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    getRecentDestinations(dongleId).then((items) => {
-      if (!cancelled) setRecents(items);
-    });
-    return () => { cancelled = true; };
-  }, [dongleId]);
 
   // Debounced, abortable search whenever the query changes without a selection.
   useEffect(() => {
@@ -142,9 +128,8 @@ export default function NavigateSearch({
     };
   }, [query, destination, carLocation]);
 
-  const showingRecents = !query.trim();
-  const items = useMemo(() => (showingRecents ? recents : results), [showingRecents, recents, results]);
-  const listVisible = listOpen && !destination && (items.length > 0 || (!showingRecents && !searching) || searchError);
+  const items = results;
+  const listVisible = listOpen && !destination && query.trim() && (items.length > 0 || !searching || searchError);
 
   const distance = useMemo(() => {
     if (!destination || !carLocation) return null;
@@ -208,7 +193,7 @@ export default function NavigateSearch({
       setActiveIdx((i) => Math.max(i - 1, 0));
     } else if (ev.key === 'Enter') {
       ev.preventDefault();
-      if (items[activeIdx]) select(items[activeIdx], showingRecents ? 'recent' : 'search');
+      if (items[activeIdx]) select(items[activeIdx], 'search');
     }
   };
 
@@ -225,7 +210,6 @@ export default function NavigateSearch({
         place_details: destination.details,
       });
       if (!mountedRef.current) return;
-      addRecentDestination(dongleId, destination).then((next) => { if (mountedRef.current) setRecents(next); });
       setSendState('sent');
       sentTimerRef.current = setTimeout(() => { if (mountedRef.current) onSent(destination); }, SENT_DISMISS_MS);
     } catch (err) {
@@ -290,9 +274,6 @@ export default function NavigateSearch({
             role="listbox"
             className="absolute inset-x-0 top-[calc(100%+6px)] overflow-hidden rounded-xl border border-white/10 bg-[#1e2224] shadow-[0_16px_40px_rgba(0,0,0,.5)]"
           >
-            {showingRecents && items.length > 0 && (
-              <div className="px-3.5 pb-1 pt-2 text-[10.5px] font-semibold uppercase tracking-[.06em] text-white/40">Recent</div>
-            )}
             {items.map((item, idx) => {
               const km = item.distance ?? ((carLocation && typeof item.latitude === 'number') ? distanceBetween(carLocation, [item.longitude, item.latitude]) : null);
               return (
@@ -305,21 +286,21 @@ export default function NavigateSearch({
                   onMouseEnter={() => setActiveIdx(idx)}
                   onMouseDown={(ev) => ev.preventDefault()}
                   disabled={resolving}
-                  onClick={() => select(item, showingRecents ? 'recent' : 'search')}
+                  onClick={() => select(item, 'search')}
                   className={`flex w-full items-center gap-3 px-3.5 py-2 text-left ${idx === activeIdx ? 'bg-white/8' : ''}`}
                 >
-                  <span className={`grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-white/8 ${showingRecents ? 'text-white/40' : 'text-white/60'}`}>
-                    {showingRecents ? <ClockIcon /> : <PinIcon />}
+                  <span className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-white/8 text-white/60">
+                    <PinIcon />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13.5px] font-medium">{highlight(item.name, showingRecents ? '' : query)}</span>
+                    <span className="block truncate text-[13.5px] font-medium">{highlight(item.name, query)}</span>
                     <span className="block truncate text-[11.5px] text-white/60">{item.details}</span>
                   </span>
                   {km !== null && <span className="shrink-0 text-[11px] tabular-nums text-white/40">{formatDistance(km)}</span>}
                 </button>
               );
             })}
-            {!showingRecents && !searching && !items.length && (
+            {!searching && !items.length && (
               <div className="px-3.5 py-4 text-[13px] text-white/60">
                 {searchError || `No places match "${query.trim()}".`}
               </div>
