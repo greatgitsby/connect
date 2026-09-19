@@ -10,6 +10,7 @@ import StatusBar from './StatusBar';
 import ControlsBar from './ControlsBar';
 import Video from './Video';
 import Joystick from './Joystick';
+import AudioControls from './AudioControls';
 
 export const BodyTeleop = ({ dongleId, device, onClose, dispatch }) => {
   const [connectionState, setConnectionState] = useState('none');
@@ -185,6 +186,7 @@ export const BodyTeleop = ({ dongleId, device, onClose, dispatch }) => {
         )}
         {connected && (
           <>
+            <AudioControls connection={connection} isLandscape={isLandscape} />
             <ControlsBar
               activeCamera={activeCamera}
               onSwitchCamera={switchCamera}

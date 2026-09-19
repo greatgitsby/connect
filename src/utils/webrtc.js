@@ -43,6 +43,12 @@ export class WebRTCConnection extends EventTarget {
     this.videoEnabled = false;
     this.connectionState = 'new';
     this.failReason = null;
+    this.audioTransceiver = null;
+    this.remoteAudioStream = null;
+    this.microphoneStream = null;
+    this.microphoneRequest = null;
+    this.microphoneGeneration = 0;
+    this.speaking = false;
   }
 
   _log(message, candidate) {
@@ -77,7 +83,6 @@ export class WebRTCConnection extends EventTarget {
       this.pc = new RTCPeerConnection({
         iceServers,
         bundlePolicy: 'max-bundle',
-        encodedInsertableStreams: true,
       });
       this._log('RTCPeerConnection created');
       const pc = this.pc;
@@ -87,6 +92,10 @@ export class WebRTCConnection extends EventTarget {
       }, CONNECTION_DEADLINE_MS);
 
       this.pc.addEventListener('track', (evt) => {
+        if (evt.track.kind === 'audio') {
+          this.remoteAudioStream = new MediaStream([evt.track]);
+          this.dispatchEvent(new Event('audiochange'));
+        }
         if (evt.track.kind === 'video') {
           if (evt.receiver) {
             // hints: minimize receiver-side buffering on Chrome
@@ -136,6 +145,9 @@ export class WebRTCConnection extends EventTarget {
       const transceiver = this.pc.addTransceiver('video', { direction: 'recvonly' });
       if (h264Codecs.length > 0) transceiver.setCodecPreferences(h264Codecs);
 
+      // Negotiate audio without requesting microphone permission during prewarm.
+      this.audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
+
       // set up data channel
       this.dc = this.pc.createDataChannel('data', { ordered: true });
       this.dc.onopen = () => {
@@ -155,6 +167,7 @@ export class WebRTCConnection extends EventTarget {
           if (msg.type === 'carState') this.callbacks.onBatteryLevel({ level: Math.round(msg.data.fuelGauge * 100), charging: !!msg.data.charging });
           if (msg.type === 'deviceState') this.callbacks.onIgnition?.(!!msg.data?.started);
           if (msg.type === 'disconnect') this.disconnect(msg.data || 'Connection replaced by another device.');
+          if (msg.type === 'audioError') this.dispatchEvent(new CustomEvent('audioerror', { detail: msg.data }));
           if (msg.type === 'clockSync' && msg.data?.action === 'pong') this._handleClockPong(msg.data);
         } catch (e) {
           console.warn('webrtc: ignoring malformed data-channel message', e);
@@ -235,6 +248,60 @@ export class WebRTCConnection extends EventTarget {
   enableVideo(enabled) {
     this.videoEnabled = enabled;
     this._sendDc('livestreamVideoEnable', { enabled });
+  }
+
+  setListening(enabled) {
+    this._sendDc('livestreamAudioEnable', { enabled });
+  }
+
+  setSpeaking(enabled) {
+    this.speaking = enabled;
+    this.microphoneStream?.getAudioTracks().forEach((track) => { track.enabled = enabled; });
+  }
+
+  async prepareMicrophone() {
+    if (this.microphoneStream) return;
+    if (this.microphoneRequest) return this.microphoneRequest;
+    const sender = this.audioTransceiver?.sender;
+    if (!sender || this.audioTransceiver.currentDirection !== 'sendrecv') {
+      throw new Error('Two-way audio is unavailable on this device.');
+    }
+    const generation = this.microphoneGeneration;
+    const request = (async () => {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      });
+      const track = stream.getAudioTracks()[0];
+      track.enabled = false;
+      if (generation !== this.microphoneGeneration) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      try {
+        await sender.replaceTrack(track);
+        if (generation !== this.microphoneGeneration) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        this.microphoneStream = stream;
+        track.enabled = this.speaking;
+      } catch (error) {
+        stream.getTracks().forEach((t) => t.stop());
+        throw error;
+      }
+    })();
+    this.microphoneRequest = request;
+    try { await request; } finally {
+      if (this.microphoneRequest === request) this.microphoneRequest = null;
+    }
+  }
+
+  releaseMicrophone() {
+    this.microphoneGeneration += 1;
+    this.setSpeaking(false);
+    this.microphoneStream?.getTracks().forEach((track) => track.stop());
+    this.microphoneStream = null;
+    this.microphoneRequest = null;
   }
 
   switchCamera(cameraName) {
@@ -346,6 +413,9 @@ export class WebRTCConnection extends EventTarget {
   }
 
   cleanup() {
+    this.releaseMicrophone();
+    this.remoteAudioStream = null;
+    this.audioTransceiver = null;
     this._clearConnectionTimeout();
     this.enableJoystick(false);
     this._stopClockSync();
@@ -481,6 +551,8 @@ export class WebRTCConnectionManager {
   release(callbacks) {
     if (callbacks && this.subscriber !== callbacks) return;
     this.subscriber = null;
+    this.connection?.releaseMicrophone();
+    this.connection?.setListening(false);
     this.setVideoEnabled(false);
     this.setJoystickEnabled(false);
   }
