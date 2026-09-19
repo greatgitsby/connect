@@ -1,13 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Mic, PlayArrow, VolumeOff, VolumeUp } from '../../icons';
 
-export default function AudioControls({ connection, isLandscape }) {
+export default function AudioControls({ connection, buttonClass, groupClass, labelClass }) {
   const audioRef = useRef(null);
   const talkRef = useRef(null);
-  const [muted, setMuted] = useState(false);
-  const [listening, setListening] = useState(false);
+  const [listening, setListening] = useState(true);
+  const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState(null);
-  const stopRef = useRef(() => {});
+  const playRef = useRef(() => {});
 
   useEffect(() => {
     if (!connection) return undefined;
@@ -19,9 +20,10 @@ export default function AudioControls({ connection, isLandscape }) {
       setSpeaking(false);
     };
     const start = async () => {
-      if (muted || held) return;
+      if (held) return;
       held = true;
       setError(null);
+      playRef.current();
       try {
         await connection.prepareMicrophone();
         if (!active || !held) return;
@@ -31,10 +33,9 @@ export default function AudioControls({ connection, isLandscape }) {
         if (active) { stop(); setError(`Microphone: ${err.message}`); }
       }
     };
-    stopRef.current = stop;
     const onKeyDown = (event) => {
-      if (event.code !== 'Space' || event.repeat || event.altKey || event.ctrlKey || event.metaKey
-        || event.target?.closest?.('input, textarea, select, button, a, [contenteditable="true"], [role="textbox"]')) return;
+      if (event.code !== 'Space' || event.repeat || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey
+        || event.target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return;
       event.preventDefault();
       start();
     };
@@ -48,11 +49,11 @@ export default function AudioControls({ connection, isLandscape }) {
       start();
     };
     const onButtonKeyDown = (event) => {
-      if ((event.code === 'Space' || event.code === 'Enter') && !event.repeat) { event.preventDefault(); start(); }
+      if (event.code === 'Enter' && !event.repeat) { event.preventDefault(); start(); }
     };
-    const onButtonKeyUp = (event) => {
-      if (event.code === 'Space' || event.code === 'Enter') { event.preventDefault(); stop(); }
-    };
+    const onButtonKeyUp = (event) => { if (event.code === 'Enter') { event.preventDefault(); stop(); } };
+    const onError = (event) => { stop(); setError(event.detail); };
+    connection.addEventListener('audioerror', onError);
     button.addEventListener('pointerdown', onPointerDown);
     button.addEventListener('pointerup', stop);
     button.addEventListener('pointercancel', stop);
@@ -67,6 +68,7 @@ export default function AudioControls({ connection, isLandscape }) {
     return () => {
       active = false;
       stop();
+      connection.removeEventListener('audioerror', onError);
       button.removeEventListener('pointerdown', onPointerDown);
       button.removeEventListener('pointerup', stop);
       button.removeEventListener('pointercancel', stop);
@@ -79,53 +81,80 @@ export default function AudioControls({ connection, isLandscape }) {
       window.removeEventListener('blur', stop);
       document.removeEventListener('visibilitychange', onVisibility);
       connection.releaseMicrophone();
-    };
-  }, [connection, muted]);
-
-  useEffect(() => {
-    const audio = audioRef.current;
-    const update = () => { audio.srcObject = connection?.remoteAudioStream || null; };
-    update();
-    const onError = (event) => { stopRef.current(); setError(event.detail); };
-    connection?.addEventListener('audioerror', onError);
-    connection?.addEventListener('audiochange', update);
-    return () => {
-      connection?.removeEventListener('audioerror', onError);
-      connection?.removeEventListener('audiochange', update);
-      connection?.setListening(false);
-      audio.srcObject = null;
+      connection.setListening(false);
     };
   }, [connection]);
 
-  const toggleListening = async () => {
-    const enabled = !listening;
+  useEffect(() => {
+    const audio = audioRef.current;
+    let active = true;
+    const play = () => {
+      if (!listening || !audio.srcObject) return;
+      Promise.resolve(audio.play()).then(() => {
+        if (active) setPlaybackBlocked(false);
+      }).catch((err) => {
+        if (!active || err.name === 'AbortError') return;
+        setPlaybackBlocked(true);
+      });
+    };
+    const update = () => {
+      if (audio.srcObject !== connection?.remoteAudioStream) audio.srcObject = connection?.remoteAudioStream || null;
+      play();
+    };
+    audio.muted = !listening;
+    connection?.setListening(listening);
+    if (!listening) setPlaybackBlocked(false);
+    update();
+    playRef.current = play;
+    connection?.addEventListener('audiochange', update);
+    audio.addEventListener('loadedmetadata', play);
+    // Retry autoplay within a user gesture if the browser initially blocked it.
+    const onGesture = () => { if (audio.paused) play(); };
+    window.addEventListener('pointerdown', onGesture);
+    window.addEventListener('keydown', onGesture);
+    return () => {
+      active = false;
+      connection?.removeEventListener('audiochange', update);
+      audio.removeEventListener('loadedmetadata', play);
+      window.removeEventListener('pointerdown', onGesture);
+      window.removeEventListener('keydown', onGesture);
+      audio.pause();
+      audio.srcObject = null;
+    };
+  }, [connection, listening]);
+
+  const toggleListening = () => {
     setError(null);
-    if (enabled && connection?.audioTransceiver?.currentDirection !== 'sendrecv') {
-      setError('Audio is unavailable on this device.');
+    if (playbackBlocked && listening) {
+      playRef.current();
       return;
     }
-    try {
-      audioRef.current.muted = !enabled;
-      if (enabled) await audioRef.current.play();
-      connection?.setListening(enabled);
-      setListening(enabled);
-    } catch (err) { setError(`Audio playback: ${err.message}`); }
+    const enabled = !listening;
+    audioRef.current.muted = !enabled;
+    connection?.setListening(enabled);
+    setListening(enabled);
   };
+  const audioLabel = playbackBlocked ? 'Play device audio' : listening ? 'Mute device microphone' : 'Unmute device microphone';
+  const AudioIcon = playbackBlocked ? PlayArrow : listening ? VolumeUp : VolumeOff;
 
-  const buttonClass = 'rounded-xl px-3 py-2 min-h-[44px] bg-white/10 text-sm cursor-pointer disabled:opacity-40';
   return (
-    <div className={`z-20 flex flex-wrap items-center gap-2 p-3 bg-glass-dark text-white ${isLandscape ? 'absolute top-16 left-3 rounded-2xl max-w-[calc(100%-24px)]' : 'shrink-0'}`}>
-      <audio ref={audioRef} muted={!listening} />
-      <button className={buttonClass} aria-pressed={listening} onClick={toggleListening}>
-        {listening ? 'Mute device audio' : 'Listen'}
-      </button>
-      <button className={buttonClass} aria-pressed={muted} onClick={() => { stopRef.current(); setMuted(!muted); }}>
-        {muted ? 'Unmute mic' : 'Mute mic'}
-      </button>
-      <button ref={talkRef} className={`${buttonClass} touch-none ${speaking ? 'bg-blue-600' : ''}`} disabled={muted} aria-pressed={speaking} aria-keyshortcuts="Space">
-        {speaking ? 'Speaking…' : 'Hold to speak (Space)'}
-      </button>
-      {error && <span role="alert" className="w-full text-sm text-red-300">{error}</span>}
-    </div>
+    <>
+      <audio ref={audioRef} autoPlay playsInline muted={!listening} />
+      <div className={groupClass}>
+        <button className={buttonClass} aria-label={audioLabel} title={audioLabel} aria-pressed={!listening} onClick={toggleListening}>
+          <AudioIcon className="text-[25px]" />
+        </button>
+        <span className={labelClass}>{playbackBlocked ? 'Play audio' : listening ? 'Sound' : 'Muted'}</span>
+      </div>
+      <div className={groupClass}>
+        <button ref={talkRef} className={`${buttonClass} touch-none ${speaking ? '!bg-blue-600 !text-white' : ''}`}
+          title="Hold to speak (Space)" aria-label="Hold to speak" aria-pressed={speaking} aria-keyshortcuts="Space"
+          onContextMenu={(event) => event.preventDefault()}>
+          <Mic className="text-[25px]" />
+        </button>
+        <span className={labelClass}>{speaking ? 'Speaking' : 'Hold Space'}</span>
+      </div>
+      {error && <span role="alert" className="basis-full text-sm text-red-300">{error}</span>}
+    </>
   );
 }

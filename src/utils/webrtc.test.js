@@ -4,7 +4,7 @@ vi.mock('../api', () => ({ athena: {} }));
 function audioConnection() {
   const conn = new WebRTCConnection({});
   conn.audioTransceiver = { currentDirection: 'sendrecv', sender: { replaceTrack: vi.fn().mockResolvedValue() } };
-  const track = { enabled: true, stop: vi.fn() };
+  const track = Object.assign(new EventTarget(), { enabled: true, readyState: 'live', stop: vi.fn() });
   const stream = { getAudioTracks: () => [track], getTracks: () => [track] };
   return { conn, track, stream };
 }
@@ -43,4 +43,28 @@ it('shares an in-flight permission request', async () => {
   vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
   await Promise.all([conn.prepareMicrophone(), conn.prepareMicrophone()]);
   expect(getUserMedia).toHaveBeenCalledTimes(1);
+});
+
+it('remembers listening preference until the data channel opens', () => {
+  const { conn } = audioConnection();
+  conn.videoEnabled = true;
+  conn.setListening(false);
+  conn.dc = { readyState: 'open', send: vi.fn() };
+  conn._sendAudioState();
+  expect(JSON.parse(conn.dc.send.mock.calls.at(-1)[0]).data.enabled).toBe(false);
+  conn.setListening(true);
+  expect(JSON.parse(conn.dc.send.mock.calls.at(-1)[0]).data.enabled).toBe(true);
+  conn.enableVideo(false);
+  expect(JSON.parse(conn.dc.send.mock.calls.at(-1)[0]).data.enabled).toBe(false);
+});
+
+it('reacquires a microphone that ended instead of silently reusing it', async () => {
+  const { conn, track, stream } = audioConnection();
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+  await conn.prepareMicrophone();
+  track.dispatchEvent(new Event('ended'));
+  expect(conn.microphoneStream).toBeNull();
+  await conn.prepareMicrophone();
+  expect(getUserMedia).toHaveBeenCalledTimes(2);
 });

@@ -49,6 +49,7 @@ export class WebRTCConnection extends EventTarget {
     this.microphoneRequest = null;
     this.microphoneGeneration = 0;
     this.speaking = false;
+    this.listeningEnabled = true;
   }
 
   _log(message, candidate) {
@@ -152,6 +153,7 @@ export class WebRTCConnection extends EventTarget {
       this.dc = this.pc.createDataChannel('data', { ordered: true });
       this.dc.onopen = () => {
         this._log('Data channel open');
+        this._sendAudioState();
         if (this.videoEnabled) {
           this._sendDc('livestreamVideoEnable', { enabled: true });
           this.enableJoystick(true);
@@ -248,10 +250,16 @@ export class WebRTCConnection extends EventTarget {
   enableVideo(enabled) {
     this.videoEnabled = enabled;
     this._sendDc('livestreamVideoEnable', { enabled });
+    this._sendAudioState();
+  }
+
+  _sendAudioState() {
+    this._sendDc('livestreamAudioEnable', { enabled: this.videoEnabled && this.listeningEnabled });
   }
 
   setListening(enabled) {
-    this._sendDc('livestreamAudioEnable', { enabled });
+    this.listeningEnabled = enabled;
+    this._sendAudioState();
   }
 
   setSpeaking(enabled) {
@@ -260,7 +268,10 @@ export class WebRTCConnection extends EventTarget {
   }
 
   async prepareMicrophone() {
-    if (this.microphoneStream) return;
+    if (this.microphoneStream) {
+      if (this.microphoneStream.getAudioTracks().some((track) => track.readyState === 'live')) return;
+      this.releaseMicrophone();
+    }
     if (this.microphoneRequest) return this.microphoneRequest;
     const sender = this.audioTransceiver?.sender;
     if (!sender || this.audioTransceiver.currentDirection !== 'sendrecv') {
@@ -284,6 +295,11 @@ export class WebRTCConnection extends EventTarget {
           return;
         }
         this.microphoneStream = stream;
+        track.addEventListener('ended', () => {
+          if (this.microphoneStream !== stream) return;
+          this.releaseMicrophone();
+          this.dispatchEvent(new CustomEvent('audioerror', { detail: 'Microphone disconnected. Hold to speak to retry.' }));
+        });
         track.enabled = this.speaking;
       } catch (error) {
         stream.getTracks().forEach((t) => t.stop());
