@@ -152,7 +152,10 @@ export default function AudioControls({ connection, buttonClass, groupClass, lab
           onContextMenu={(event) => event.preventDefault()}>
           <Mic className="text-[25px]" />
         </button>
-        <span className={labelClass}>{speaking ? 'Speaking' : 'Hold Space'}</span>
+        <span className={`${labelClass} grid`}>
+          <span className={`col-start-1 row-start-1 ${speaking ? 'invisible' : ''}`} aria-hidden={speaking}>Hold Space</span>
+          <span className={`col-start-1 row-start-1 ${speaking ? '' : 'invisible'}`} aria-hidden={!speaking}>Speaking</span>
+        </span>
       </div>
       {error && <span role="alert" className="basis-full text-sm text-red-300">{error}</span>}
     </>
