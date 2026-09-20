@@ -89,3 +89,54 @@ it('rejects speaking after renegotiation loses the sending direction', async () 
   conn.audioTransceiver.currentDirection = 'recvonly';
   await expect(conn.prepareMicrophone()).rejects.toThrow('Two-way audio is unavailable');
 });
+
+it('requests echo cancellation without automatic microphone gain', async () => {
+  const { conn, stream } = audioConnection();
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+  await conn.prepareMicrophone();
+  expect(getUserMedia).toHaveBeenCalledWith({ audio: {
+    echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1,
+  } });
+});
+
+it('uses all-playback cancellation when supported and logs actual settings', async () => {
+  const { conn, track, stream } = audioConnection();
+  track.getCapabilities = () => ({ echoCancellation: [true, false, 'all'] });
+  track.applyConstraints = vi.fn().mockResolvedValue();
+  track.getSettings = () => ({ echoCancellation: 'all', noiseSuppression: true, autoGainControl: false });
+  const log = vi.fn();
+  conn.addEventListener('log', log);
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } });
+  await conn.prepareMicrophone();
+  expect(track.applyConstraints).toHaveBeenCalledWith(expect.objectContaining({
+    echoCancellation: { exact: 'all' }, autoGainControl: false,
+  }));
+  expect(log.mock.calls.at(-1)[0].detail.message).toContain('echoCancellation=all');
+  expect(track.enabled).toBe(false);
+});
+
+it('keeps microphone audio available when the optional cancellation mode is rejected', async () => {
+  const { conn, track, stream } = audioConnection();
+  track.getCapabilities = () => ({ echoCancellation: [true, false, 'all'] });
+  track.applyConstraints = vi.fn().mockRejectedValue(new DOMException('Unsupported', 'OverconstrainedError'));
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } });
+  await conn.prepareMicrophone();
+  expect(conn.audioTransceiver.sender.replaceTrack).toHaveBeenCalledWith(track);
+  expect(track.stop).not.toHaveBeenCalled();
+});
+
+it('does not attach a microphone after cleanup during cancellation setup', async () => {
+  const { conn, track, stream } = audioConnection();
+  let finish;
+  track.getCapabilities = () => ({ echoCancellation: ['all'] });
+  track.applyConstraints = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } });
+  const request = conn.prepareMicrophone();
+  await vi.waitFor(() => expect(track.applyConstraints).toHaveBeenCalled());
+  conn.cleanup();
+  finish();
+  await request;
+  expect(track.stop).toHaveBeenCalled();
+  expect(conn.microphoneStream).toBeNull();
+});

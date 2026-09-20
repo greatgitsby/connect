@@ -91,3 +91,47 @@ it('reports permission errors without starting transmission', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('Permission denied');
   expect(conn.setSpeaking).not.toHaveBeenCalledWith(true);
 });
+
+it('smoothly lowers playback during speech and restores it without changing device mute', async () => {
+  let now = 0;
+  let nextId = 0;
+  const frames = new Map();
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+    nextId += 1;
+    frames.set(nextId, callback);
+    return nextId;
+  });
+  vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => frames.delete(id));
+  const advance = (ms) => {
+    now += ms;
+    const callbacks = [...frames.values()];
+    frames.clear();
+    act(() => callbacks.forEach((callback) => callback(now)));
+  };
+  const conn = connection();
+  const view = render(<AudioControls connection={conn} />);
+  const audio = view.container.querySelector('audio');
+  conn.setListening.mockClear();
+  await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
+  advance(40);
+  expect(audio.volume).toBeCloseTo(0.625);
+  advance(40);
+  expect(audio.volume).toBeCloseTo(0.25);
+  expect(audio.muted).toBe(false);
+  expect(conn.setListening).not.toHaveBeenCalled();
+  fireEvent.keyUp(document.body, { code: 'Space' });
+  advance(120);
+  expect(audio.volume).toBeCloseTo(0.625);
+  // A quick second press reverses the fade from the current level.
+  await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
+  advance(80);
+  expect(audio.volume).toBeCloseTo(0.25);
+  fireEvent.click(screen.getByRole('button', { name: 'Mute device microphone' }));
+  fireEvent.blur(window);
+  advance(240);
+  expect(audio.volume).toBe(1);
+  expect(audio.muted).toBe(true);
+  view.unmount();
+  expect(frames.size).toBe(0);
+});

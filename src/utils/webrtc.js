@@ -11,6 +11,11 @@ const CLOCK_PING_MS = 500;
 const CONNECTION_DEADLINE_MS = 15000;
 const ICE_GATHER_DEADLINE_MS = 8000;
 
+// Avoid raising quiet speaker leakage during pauses in near-end speech.
+const MICROPHONE_CONSTRAINTS = {
+  echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 1,
+};
+
 // Drop mDNS (.local) host candidates from an SDP — the device can't resolve them.
 function stripMdnsCandidates(sdp) {
   return sdp
@@ -290,7 +295,7 @@ export class WebRTCConnection extends EventTarget {
     const generation = this.microphoneGeneration;
     const request = (async () => {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+        audio: MICROPHONE_CONSTRAINTS,
       });
       const track = stream.getAudioTracks()[0];
       track.enabled = false;
@@ -299,6 +304,21 @@ export class WebRTCConnection extends EventTarget {
         return;
       }
       try {
+        // Newer browsers can cancel all local playback. Keep ordinary AEC on
+        // older browsers, or when the advertised mode cannot be applied.
+        if (track.getCapabilities?.().echoCancellation?.includes('all') && track.applyConstraints) {
+          try {
+            await track.applyConstraints({ ...MICROPHONE_CONSTRAINTS, echoCancellation: { exact: 'all' } });
+          } catch {
+            this._log('All-playback echo cancellation unavailable; using browser default cancellation.');
+          }
+        }
+        if (generation !== this.microphoneGeneration || sender !== this.audioTransceiver?.sender) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        const settings = track.getSettings?.() || {};
+        this._log(`Microphone processing: echoCancellation=${settings.echoCancellation ?? 'unknown'}, noiseSuppression=${settings.noiseSuppression ?? 'unknown'}, autoGainControl=${settings.autoGainControl ?? 'unknown'}`);
         await sender.replaceTrack(track);
         if (generation !== this.microphoneGeneration) {
           stream.getTracks().forEach((t) => t.stop());

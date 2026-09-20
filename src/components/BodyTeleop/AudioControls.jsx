@@ -11,6 +11,22 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
   const playRef = useRef(() => {});
 
   useEffect(() => {
+    const audio = audioRef.current;
+    const initial = audio.volume;
+    const target = speaking ? 0.25 : 1;
+    const duration = speaking ? 80 : 240;
+    const started = performance.now();
+    let frame;
+    const fade = (now) => {
+      const progress = Math.min(1, Math.max(0, (now - started) / duration));
+      audio.volume = initial + (target - initial) * progress;
+      if (progress < 1) frame = requestAnimationFrame(fade);
+    };
+    frame = requestAnimationFrame(fade);
+    return () => cancelAnimationFrame(frame);
+  }, [speaking]);
+
+  useEffect(() => {
     if (!connection) return undefined;
     let active = true;
     let held = false;
