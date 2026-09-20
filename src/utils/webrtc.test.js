@@ -1,5 +1,7 @@
 import { WebRTCConnection } from './webrtc';
-vi.mock('../api', () => ({ athena: {} }));
+import { athena } from '../api';
+vi.mock('../api', () => ({ athena: { postJsonRpcPayload: vi.fn() } }));
+vi.mock('./turn', () => ({ getTurnCredentials: vi.fn().mockResolvedValue(null) }));
 
 function audioConnection() {
   const conn = new WebRTCConnection({});
@@ -139,4 +141,49 @@ it('does not attach a microphone after cleanup during cancellation setup', async
   await request;
   expect(track.stop).toHaveBeenCalled();
   expect(conn.microphoneStream).toBeNull();
+});
+
+
+it.each([['sendrecv', true], ['sendrecv', false], ['recvonly', true], ['inactive', false], [null, false]])('negotiated audio %s with source %s retries video-only only when unsupported', async (direction, hasSource) => {
+  const supported = direction === 'sendrecv' && hasSource;
+  const peers = [];
+  class Peer extends EventTarget {
+    constructor() { super(); this.transceivers = []; peers.push(this); }
+    addTransceiver(kind) {
+      const transceiver = { kind, currentDirection: null, setCodecPreferences: vi.fn(), stop: vi.fn() };
+      this.transceivers.push(transceiver);
+      return transceiver;
+    }
+    createDataChannel() { return { close: vi.fn() }; }
+    async createOffer() { return { sdp: this.transceivers.map((t) => t.kind).join(' ') }; }
+    async setLocalDescription(offer) {
+      this.localDescription = offer;
+      setTimeout(() => this.dispatchEvent(new Event('icecandidate')), 0);
+    }
+    async setRemoteDescription() {
+      this.transceivers.forEach((t) => { t.currentDirection = t.kind === 'audio' ? direction : 'recvonly'; });
+    }
+    close() { this.closed = true; }
+    getTransceivers() { return this.transceivers; }
+  }
+  vi.useFakeTimers();
+  vi.stubGlobal('RTCPeerConnection', Peer);
+  vi.stubGlobal('RTCRtpReceiver', { getCapabilities: () => ({ codecs: [] }) });
+  athena.postJsonRpcPayload.mockReset();
+  athena.postJsonRpcPayload.mockResolvedValue({ result: { sdp: `v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=ssrc:123 cname:video\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=sendrecv\r\n${hasSource ? 'a=ssrc:456 cname:audio\r\n' : ''}` } });
+  const conn = new WebRTCConnection({ onConnectionState: vi.fn() });
+  try {
+    const request = conn.connect('device', true);
+    await vi.advanceTimersByTimeAsync(10);
+    await request;
+    expect(peers).toHaveLength(supported ? 1 : 2);
+    expect(athena.postJsonRpcPayload).toHaveBeenCalledTimes(peers.length);
+    expect(peers[0].closed ?? false).toBe(!supported);
+    expect(peers.at(-1).transceivers.map((t) => t.kind)).toEqual(supported ? ['video', 'audio'] : ['video']);
+    expect(conn.audioTransceiver?.currentDirection ?? null).toBe(supported ? direction : null);
+    expect(athena.postJsonRpcPayload.mock.calls.at(-1)[1].params.enabled).toBe(true);
+  } finally {
+    conn.cleanup();
+    vi.useRealTimers();
+  }
 });

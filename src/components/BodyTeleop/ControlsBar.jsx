@@ -89,13 +89,13 @@ const ControlsBar = ({
         </div>
         <span className="text-[10px] lg:text-[13px] font-semibold tracking-[0.5px] uppercase text-white/35 text-center leading-none">Snapshot</span>
       </div>
-      <AudioControls
+      {connection?.audioTransceiver?.currentDirection === 'sendrecv' && <AudioControls
         connection={connection}
         buttonClass={`${btnInactive} !w-11 sm:!w-16 transition duration-200 opacity-90`}
         activeButtonClass={`${btnActive} !w-11 sm:!w-16 transition duration-200 opacity-90`}
         groupClass="flex flex-col items-center justify-between gap-[5px] lg:gap-[7px]"
         labelClass="text-[10px] lg:text-[13px] font-semibold tracking-[0.5px] uppercase text-white/35 text-center leading-none whitespace-nowrap"
-      />
+      />}
     </div>
   );
 };

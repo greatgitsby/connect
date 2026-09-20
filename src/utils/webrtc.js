@@ -68,7 +68,7 @@ export class WebRTCConnection extends EventTarget {
     this.callbacks.onConnectionState(state, reason);
   }
 
-  async connect(dongleId, videoEnabled = false) {
+  async connect(dongleId, videoEnabled = false, withAudio = true) {
     this.cleanup();
     this._setState('connecting');
     this.connectStartedAt = performance.now();
@@ -152,7 +152,7 @@ export class WebRTCConnection extends EventTarget {
       if (h264Codecs.length > 0) transceiver.setCodecPreferences(h264Codecs);
 
       // Negotiate audio without requesting microphone permission during prewarm.
-      this.audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
+      if (withAudio) this.audioTransceiver = this.pc.addTransceiver('audio', { direction: 'sendrecv' });
 
       // set up data channel
       this.dc = this.pc.createDataChannel('data', { ordered: true });
@@ -237,6 +237,13 @@ export class WebRTCConnection extends EventTarget {
 
       if (this.pc !== pc) return;
       await this.pc.setRemoteDescription({ type: 'answer', sdp: resp.result.sdp });
+      if (this.pc !== pc) return;
+      // Older libdatachannel answers sendrecv even without an audio producer.
+      const hasAudioSource = resp.result.sdp.split(/(?=^m=)/m).some((media) => media.startsWith('m=audio ') && /^a=ssrc:/m.test(media));
+      if (withAudio && (!hasAudioSource || this.audioTransceiver?.currentDirection !== 'sendrecv')) {
+        this._log('Device did not negotiate two-way audio; retrying video-only.');
+        return this.connect(dongleId, this.videoEnabled, false);
+      }
       this._log('Remote description (answer) set');
     } catch (err) {
       this.fail(err.message);
