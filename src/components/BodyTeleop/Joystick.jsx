@@ -65,7 +65,6 @@ const ControllerOverlay = ({ gamepadSteering, gamepadGas, gamepadBrake, gamepadL
 }
 
 const TouchJoystick = ({ className, thumbPos, joystickAreaRef, onTouchStart, onTouchMove, onTouchEnd, onMouseDown }) => {
-  // Keep the entire thumb inside the pad, with 4px clearance at full input.
   const thumbPosition = (value = 0) => `calc(${50 + value * 50}% - ${value} * (var(--thumb-size) / 2 + 4px))`;
 
   return (
