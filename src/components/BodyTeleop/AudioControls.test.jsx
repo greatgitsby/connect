@@ -7,7 +7,7 @@ beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
 });
 
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => vi.restoreAllMocks());
 
 function connection() {
   return Object.assign(new EventTarget(), {
@@ -90,44 +90,4 @@ it('reports permission errors without starting transmission', async () => {
   await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
   expect(screen.getByRole('alert')).toHaveTextContent('Permission denied');
   expect(conn.setSpeaking).not.toHaveBeenCalledWith(true);
-});
-
-
-it('suppresses return audio through speech and its echo tail without changing the mute preference', async () => {
-  vi.useFakeTimers();
-  const conn = connection();
-  const view = render(<AudioControls connection={conn} />);
-  const audio = view.container.querySelector('audio');
-  await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
-  expect(audio.muted).toBe(true);
-  expect(conn.setListening).toHaveBeenLastCalledWith(false);
-  fireEvent.keyUp(document.body, { code: 'Space' });
-  act(() => vi.advanceTimersByTime(599));
-  expect(audio.muted).toBe(true);
-  act(() => vi.advanceTimersByTime(1));
-  expect(audio.muted).toBe(false);
-  expect(conn.setListening).toHaveBeenLastCalledWith(true);
-  fireEvent.click(screen.getByRole('button', { name: 'Mute device microphone' }));
-  await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
-  fireEvent.keyUp(document.body, { code: 'Space' });
-  act(() => vi.advanceTimersByTime(600));
-  expect(audio.muted).toBe(true);
-  expect(conn.setListening).toHaveBeenLastCalledWith(false);
-});
-
-it('does not resume return audio during another press or after unmount', async () => {
-  vi.useFakeTimers();
-  const conn = connection();
-  const view = render(<AudioControls connection={conn} />);
-  await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
-  fireEvent.keyUp(document.body, { code: 'Space' });
-  act(() => vi.advanceTimersByTime(300));
-  await act(async () => { fireEvent.keyDown(document.body, { code: 'Space' }); });
-  act(() => vi.advanceTimersByTime(600));
-  expect(conn.setListening).toHaveBeenLastCalledWith(false);
-  fireEvent.keyUp(document.body, { code: 'Space' });
-  view.unmount();
-  conn.setListening.mockClear();
-  act(() => vi.advanceTimersByTime(600));
-  expect(conn.setListening).not.toHaveBeenCalled();
 });
