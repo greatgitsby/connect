@@ -268,15 +268,25 @@ export class WebRTCConnection extends EventTarget {
   }
 
   async prepareMicrophone() {
-    if (this.microphoneStream) {
-      if (this.microphoneStream.getAudioTracks().some((track) => track.readyState === 'live')) return;
-      this.releaseMicrophone();
-    }
-    if (this.microphoneRequest) return this.microphoneRequest;
     const sender = this.audioTransceiver?.sender;
     if (!sender || this.audioTransceiver.currentDirection !== 'sendrecv') {
       throw new Error('Two-way audio is unavailable on this device.');
     }
+    if (this.microphoneStream) {
+      const track = this.microphoneStream.getAudioTracks().find((candidate) => candidate.readyState === 'live');
+      if (track) {
+        // A live capture track does not imply it is still attached to this sender.
+        // Rebind after reconnects or replacement tracks instead of silently sending nothing.
+        const generation = this.microphoneGeneration;
+        await sender.replaceTrack(track);
+        if (generation !== this.microphoneGeneration || sender !== this.audioTransceiver?.sender) {
+          throw new Error('Audio connection changed. Release and hold to speak again.');
+        }
+        return;
+      }
+      this.releaseMicrophone();
+    }
+    if (this.microphoneRequest) return this.microphoneRequest;
     const generation = this.microphoneGeneration;
     const request = (async () => {
       const stream = await navigator.mediaDevices.getUserMedia({

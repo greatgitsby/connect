@@ -68,3 +68,24 @@ it('reacquires a microphone that ended instead of silently reusing it', async ()
   await conn.prepareMicrophone();
   expect(getUserMedia).toHaveBeenCalledTimes(2);
 });
+
+
+it('reattaches an existing microphone if the sender track was replaced', async () => {
+  const { conn, track, stream } = audioConnection();
+  const getUserMedia = vi.fn().mockResolvedValue(stream);
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+  await conn.prepareMicrophone();
+  conn.audioTransceiver.sender.replaceTrack.mockClear();
+  conn.audioTransceiver.sender.track = null;
+  await conn.prepareMicrophone();
+  expect(conn.audioTransceiver.sender.replaceTrack).toHaveBeenCalledWith(track);
+  expect(getUserMedia).toHaveBeenCalledTimes(1);
+});
+
+it('rejects speaking after renegotiation loses the sending direction', async () => {
+  const { conn, stream } = audioConnection();
+  vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(stream) } });
+  await conn.prepareMicrophone();
+  conn.audioTransceiver.currentDirection = 'recvonly';
+  await expect(conn.prepareMicrophone()).rejects.toThrow('Two-way audio is unavailable');
+});
