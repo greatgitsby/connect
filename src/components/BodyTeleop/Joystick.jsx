@@ -65,7 +65,8 @@ const ControllerOverlay = ({ gamepadSteering, gamepadGas, gamepadBrake, gamepadL
 }
 
 const TouchJoystick = ({ className, thumbPos, joystickAreaRef, onTouchStart, onTouchMove, onTouchEnd, onMouseDown }) => {
-  const thumbPosition = (value = 0) => `calc(${50 + value * 50}% - ${value} * (var(--thumb-size) / 2 + 4px))`;
+  const thumbEdgeBuffer = 4;
+  const thumbPosition = (value = 0) => `calc(${50 + value * 50}% - ${value} * (var(--thumb-size) / 2 + ${thumbEdgeBuffer}px))`;
 
   return (
     <div
