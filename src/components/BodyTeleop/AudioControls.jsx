@@ -7,6 +7,7 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
   const [listening, setListening] = useState(true);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [returnAudioPaused, setReturnAudioPaused] = useState(false);
   const [error, setError] = useState(null);
   const playRef = useRef(() => {});
 
@@ -14,19 +15,31 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
     if (!connection) return undefined;
     let active = true;
     let held = false;
+    let resumeTimer;
+    setReturnAudioPaused(false);
     const stop = () => {
+      const wasHeld = held;
       held = false;
       connection.setSpeaking(false);
       setSpeaking(false);
+      if (active && wasHeld) {
+        clearTimeout(resumeTimer);
+        // Let speaker playback and its acoustic echo drain before listening again.
+        resumeTimer = setTimeout(() => setReturnAudioPaused(false), 600);
+      }
     };
     const start = async () => {
       if (held) return;
       held = true;
+      clearTimeout(resumeTimer);
       setError(null);
       playRef.current();
       try {
         await connection.prepareMicrophone();
         if (!active || !held) return;
+        audioRef.current.muted = true;
+        connection.setListening(false);
+        setReturnAudioPaused(true);
         connection.setSpeaking(true);
         setSpeaking(true);
       } catch (err) {
@@ -67,6 +80,7 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       active = false;
+      clearTimeout(resumeTimer);
       stop();
       connection.removeEventListener('audioerror', onError);
       button.removeEventListener('pointerdown', onPointerDown);
@@ -101,8 +115,6 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
       if (audio.srcObject !== connection?.remoteAudioStream) audio.srcObject = connection?.remoteAudioStream || null;
       play();
     };
-    audio.muted = !listening;
-    connection?.setListening(listening);
     if (!listening) setPlaybackBlocked(false);
     update();
     playRef.current = play;
@@ -123,6 +135,12 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
     };
   }, [connection, listening]);
 
+  useEffect(() => {
+    const enabled = listening && !returnAudioPaused;
+    audioRef.current.muted = !enabled;
+    connection?.setListening(enabled);
+  }, [connection, listening, returnAudioPaused]);
+
   const toggleListening = () => {
     setError(null);
     if (playbackBlocked && listening) {
@@ -130,8 +148,8 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
       return;
     }
     const enabled = !listening;
-    audioRef.current.muted = !enabled;
-    connection?.setListening(enabled);
+    audioRef.current.muted = !enabled || returnAudioPaused;
+    connection?.setListening(enabled && !returnAudioPaused);
     setListening(enabled);
   };
   const audioLabel = playbackBlocked ? 'Play device audio' : listening ? 'Mute device microphone' : 'Unmute device microphone';
@@ -139,7 +157,7 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
 
   return (
     <>
-      <audio ref={audioRef} autoPlay playsInline muted={!listening} />
+      <audio ref={audioRef} autoPlay playsInline muted={!listening || returnAudioPaused} />
       <div className={groupClass}>
         <button className={buttonClass} aria-label={audioLabel} title={audioLabel} aria-pressed={!listening} onClick={toggleListening}>
           <AudioIcon className="text-[25px]" />
