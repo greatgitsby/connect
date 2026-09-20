@@ -52,6 +52,8 @@ export default function AudioControls({ connection, buttonClass, activeButtonCla
     const onKeyDown = (event) => {
       if (event.code !== 'Space' || event.repeat || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey
         || event.target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]')) return;
+      const control = event.target?.closest?.('button, a[href], summary, audio[controls], video[controls], [tabindex], [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [role="spinbutton"], [role="combobox"], [role="listbox"], [role="option"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="tab"], [role="treeitem"]');
+      if (control && control !== talkRef.current) return;
       event.preventDefault();
       start();
     };
