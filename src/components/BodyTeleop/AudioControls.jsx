@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Mic, PlayArrow, VolumeOff, VolumeUp } from '../../icons';
 
-export default function AudioControls({ connection, buttonClass, groupClass, labelClass }) {
+export default function AudioControls({ connection, buttonClass, activeButtonClass, groupClass, labelClass }) {
   const audioRef = useRef(null);
   const talkRef = useRef(null);
   const [listening, setListening] = useState(true);
@@ -147,7 +147,7 @@ export default function AudioControls({ connection, buttonClass, groupClass, lab
         <span className={labelClass}>{playbackBlocked ? 'Play audio' : listening ? 'Sound' : 'Muted'}</span>
       </div>
       <div className={groupClass}>
-        <button ref={talkRef} className={`${buttonClass} touch-none ${speaking ? '!bg-blue-600 !text-white' : ''}`}
+        <button ref={talkRef} className={`${speaking ? activeButtonClass : buttonClass} touch-none`}
           title="Hold to speak (Space)" aria-label="Hold to speak" aria-pressed={speaking} aria-keyshortcuts="Space"
           onContextMenu={(event) => event.preventDefault()}>
           <Mic className="text-[25px]" />
